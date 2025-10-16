@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+ultralytics
+opencv-python
+numpy
+gTTS
+playsound==1.2.2
+python-dotenv
+pydantic
+pydantic-settings
+python-multipart
+
