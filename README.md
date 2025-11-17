@@ -1,103 +1,116 @@
-## Third Eye for the Blind — FastAPI Backend
+Third Eye for the Blind (Capstone Project)
+📌 Overview
 
-An AI vision assistant backend that detects objects from camera frames using local YOLOv8 inference and speaks results via TTS, designed for visually impaired users.
+Third Eye for the Blind is a wearable AI-powered assistive device designed to help visually impaired users navigate the world safely.
+Using a camera + onboard processing + audio feedback, the system identifies objects, obstacles, and contextual cues in real time.
 
-### 🧠 Overview
-- **Input**: Live frames sent via API (multipart/form-data)
-- **Processing**: Local YOLOv8 object detection (no cloud APIs required)
-- **Output**: Text-to-Speech playback with gTTS and structured JSON response
-- **Client**: OpenCV-based test client for real-time testing
+The project applies advanced Computer Vision, Multimodal AI, and Agentic AI pipelines to deliver real-time scene understanding through simple, intuitive audio instructions.
 
-### ⚙️ Setup Instructions
-1) Clone or copy the `third_eye_backend` folder.
-2) Create and activate a Python 3.10+ virtual environment.
-3) Install requirements:
-```bash
-pip install -r requirements.txt
-```
-4) No API keys required! The system uses local YOLOv8 inference.
-5) Optional: Create `.env` file to customize settings:
-```env
-PORT=8000
-YOLO_MODEL_PATH=yolov8n.pt
-```
+🎯 Core Objective
 
-#### YOLO Model Options
-- `yolov8n.pt` - Nano (fastest, least accurate)
-- `yolov8s.pt` - Small (balanced)
-- `yolov8m.pt` - Medium (more accurate)
-- `yolov8l.pt` - Large (most accurate, slower)
+To build a lightweight, reliable wearable that:
 
-The model will be automatically downloaded on first run.
+Detects objects & obstacles
 
-### ▶️ Run the backend
-```bash
-uvicorn main:app --reload
-```
-Server will start at `http://127.0.0.1:8000` by default.
+Recognizes people and key landmarks
 
-### ✅ Health check
-```bash
-curl http://127.0.0.1:8000/
-```
-Response:
-```json
-{"message": "API running successfully 🚀"}
-```
+Provides real-time audio feedback
 
-### 📸 Test with sample image (Python)
-```python
-import requests
+Helps users navigate safely without human assistance
 
-files = {"image": open("test.jpg", "rb")}
-res = requests.post("http://127.0.0.1:8000/process_frame", files=files)
-print(res.json())
-```
+🔍 System Architecture
 
-### 🎥 Real-time test client
-Run the OpenCV client to stream frames every 3 seconds:
-```bash
-python client/client_camera.py
-```
-Press `q` in the preview window to quit.
+Camera Module → captures real-time video
 
-### 🗂️ Project Structure
-```
-third_eye_backend/
-├── main.py
-├── core/
-│   ├── vision_utils.py
-│   └── tts_utils.py
-├── config/
-│   ├── settings.py
-│   └── __init__.py
-├── client/
-│   └── client_camera.py
-├── requirements.txt
-├── .env  # not committed; see example in README
-└── README.md
-```
+OpenCV Pipeline → preprocessing, object tracking, optical flow
 
-### 🔧 Implementation Notes
-- All endpoints are async. CPU/IO-heavy calls (Vision, gTTS/playsound) run in a threadpool.
-- CORS is open to all origins for ease of testing with OpenCV or embedded devices.
-- Structured logging is enabled across the app.
+FastAPI Backend → sends preprocessed frames to LLM/Vision model
 
-### 🚨 Error Handling
-- Empty images or unexpected errors return proper HTTP codes and JSON messages.
-- YOLOv8/TTS errors are logged; the API responds gracefully.
-- Model loading failures are handled gracefully with fallback responses.
+Gemini Vision API → object detection, environment description
 
-### ☁️ Deployment (Render/Railway)
-- No API keys required for deployment!
-- Start command:
-```bash
-uvicorn main:app --host 0.0.0.0 --port $PORT
-```
-- For Render/Railway: configure a Web Service and set `PORT` only.
-- The YOLOv8 model will be downloaded automatically on first startup.
+Google TTS → converts output into audio
 
-### 📄 License
-For demonstration/educational use.
+Wearable Speaker / Earbuds → plays navigation instructions
 
+🧠 AI Components
+Computer Vision (Local)
 
+Edge detection
+
+Motion tracking
+
+Obstacle proximity estimation
+
+Low-light enhancement
+
+Multimodal LLM (Cloud)
+
+Gemini Vision returns:
+
+Object names
+
+Relative positions (“chair on your left”, “person ahead 3 meters”)
+
+Scene description
+
+Danger alerts
+
+Agentic Logic
+
+Prioritizes hazardous objects
+
+Generates simple navigation instructions
+
+Avoids overloading the user with too many details
+
+🔌 Tech Stack
+
+Python, OpenCV
+
+FastAPI
+
+Gemini Vision API
+
+Google Text-to-Speech
+
+Raspberry Pi / Jetson Nano (optional)
+
+Wireless earbuds / vibration motor
+
+📱 User Experience Flow
+
+User wears the device
+
+Camera captures scene
+
+Edge CV model filters + preprocesses
+
+Gemini Vision interprets the environment
+
+Audio output guides user
+
+Repeats continuously with <300ms latency
+
+🧪 Testing & Validation
+
+Indoor navigation tests
+
+Outdoor obstacle detection
+
+Low-light scenarios
+
+Moving object tracking
+
+Latency + stability checks
+
+🔮 Future Enhancements
+
+Offline object detection with YOLO-Nano
+
+Path planning (SLAM-based)
+
+Voice interaction
+
+Haptic feedback
+
+GPS integration for outdoor navigation
