@@ -7,7 +7,7 @@ import cv2
 import requests
 
 
-URL = "http://127.0.0.1:8000/process_frame"
+URL = "http://127.0.0.1:8000/predict"
 FRAME_INTERVAL = 3.0  # seconds between frame captures
 
 
@@ -43,13 +43,15 @@ def main() -> None:
             # Send frame to API
             files = {"image": ("frame.jpg", buffer.tobytes(), "image/jpeg")}
             try:
-                print("Sending frame to Gemini API...")
+                print("Sending frame to backend /predict ...")
                 response = requests.post(URL, files=files, timeout=30)
                 
                 if response.status_code == 200:
                     try:
                         data: Dict[str, Any] = response.json()
-                        if "description" in data:
+                        if "risk" in data and "message" in data:
+                            print(f"⚠️  Risk Level: {data['risk']} | {data['message']}")
+                        elif "description" in data:
                             print(f"🎯 Gemini says: {data['description']}")
                         else:
                             print(f"📊 Response: {data}")

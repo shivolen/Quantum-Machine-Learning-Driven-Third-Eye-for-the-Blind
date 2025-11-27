@@ -6,15 +6,28 @@ import binascii
 import logging
 from typing import Any, List
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+import asyncio
+
+import httpx
+from pathlib import Path
+
+import sys
+from fastapi import FastAPI, File, HTTPException, UploadFile, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+PACKAGE_DIR = Path(__file__).resolve().parent
+if str(PACKAGE_DIR) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_DIR))
+
 from config.settings import settings
 from core.tts_utils import speak
 from core.vision_utils import analyze_image_with_fallback
+from feature_utils import extract_features_from_gemini_response
+from qml_inference import load_model_bundle, predict_risks
+from tts_utils import speak_risk
 
 
 # Configure structured logging
@@ -59,6 +72,10 @@ async def test_mock() -> dict[str, Any]:
 
 
 class Base64ImagePayload(BaseModel):
+    image: str
+
+
+class PredictionPayload(BaseModel):
     image: str
 
 
@@ -146,6 +163,136 @@ async def detect_objects(payload: Base64ImagePayload) -> JSONResponse:
         raise HTTPException(status_code=400, detail="Invalid base64-encoded image") from exc
 
     return await _handle_image_bytes(image_bytes)
+
+
+async def _request_gemini_detections(image_bytes: bytes) -> dict[str, Any]:
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Gemini API key is not configured.")
+
+    encoded = base64.b64encode(image_bytes).decode("utf-8")
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": (
+                            "Detect objects and provide JSON with a 'detections' array of "
+                            "{name: string, bbox: {x1: float, y1: float, x2: float, y2: float}}. "
+                            "Use normalized coordinates between 0 and 1."
+                        )
+                    },
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": encoded,
+                        }
+                    },
+                ]
+            }
+        ]
+    }
+
+    timeout = httpx.Timeout(40.0, connect=10.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            response = await client.post(
+                settings.GEMINI_API_URL,
+                params={"key": settings.GEMINI_API_KEY},
+                json=payload,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error("Gemini API error: %s", exc.response.text)
+            raise HTTPException(status_code=502, detail="Gemini API request failed.") from exc
+        except httpx.HTTPError as exc:  # noqa: BLE001
+            logger.error("Network error contacting Gemini API: %s", exc)
+            raise HTTPException(status_code=502, detail="Gemini API network error.") from exc
+    return response.json()
+
+
+async def _predict_risk_from_frame(image_bytes: bytes) -> dict[str, Any]:
+    gemini_response = await _request_gemini_detections(image_bytes)
+    feature_vectors, object_names = extract_features_from_gemini_response(gemini_response)
+
+    logger.info(
+        "Gemini detections complete",
+        extra={"objects": object_names, "count": len(object_names)},
+    )
+
+    if not feature_vectors:
+        logger.info("No valid feature vectors found; defaulting to safe state.")
+        message = await run_in_threadpool(speak_risk, 0)
+        return {"risk": 0, "message": message, "objects_detected": []}
+
+    risks = await run_in_threadpool(predict_risks, feature_vectors)
+    logger.info("QML model returned predictions", extra={"predictions": risks})
+
+    if not risks:
+        logger.warning("Prediction returned no values; defaulting to safe state.")
+        message = await run_in_threadpool(speak_risk, 0)
+        return {"risk": 0, "message": message, "objects_detected": object_names}
+
+    max_risk = int(max(risks))
+    logger.info(
+        "Highest risk computed",
+        extra={"risk": max_risk, "objects_detected": object_names},
+    )
+    message = await run_in_threadpool(speak_risk, max_risk)
+    logger.info("Risk message ready", extra={"message": message})
+
+    return {
+        "risk": max_risk,
+        "message": message,
+        "objects_detected": object_names,
+    }
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    logger.info("Loading QML model into memory.")
+    await asyncio.get_running_loop().run_in_executor(None, load_model_bundle)
+    logger.info("QML model loaded.")
+
+
+@app.post("/predict")
+async def predict_endpoint(
+    request: Request,
+    image: UploadFile | None = File(default=None),
+) -> JSONResponse:
+    logger.info("Predict endpoint invoked.")
+    image_bytes: bytes | None = None
+
+    if image is not None:
+        image_bytes = await image.read()
+    else:
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            try:
+                payload_dict = await request.json()
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="Invalid JSON payload.") from exc
+
+            try:
+                payload = PredictionPayload(**payload_dict)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=422, detail="JSON payload must include 'image'.") from exc
+
+            if payload.image:
+                try:
+                    image_bytes = base64.b64decode(payload.image, validate=True)
+                except (binascii.Error, ValueError) as exc:
+                    raise HTTPException(status_code=400, detail="Invalid base64 payload.") from exc
+        elif content_type:
+            form = await request.form()
+            image_field = form.get("image")
+            if isinstance(image_field, UploadFile):
+                image_bytes = await image_field.read()
+
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="No image data provided.")
+
+    result = await _predict_risk_from_frame(image_bytes)
+    return JSONResponse(status_code=200, content=result)
 
 
 def run_server() -> None:

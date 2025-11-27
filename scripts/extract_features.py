@@ -13,15 +13,7 @@ import cv2
 import numpy as np
 import requests
 
-import sys
-
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from third_eye_backend.config.settings import settings
+import os
 
 
 logging.basicConfig(
@@ -109,8 +101,14 @@ def ensure_csv_header(csv_path: Path) -> None:
 
 
 def call_gemini(image_bytes: bytes) -> Optional[str]:
-    if not settings.GEMINI_API_KEY:
-        logger.error("GEMINI_API_KEY is not configured.")
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    gemini_api_url = os.getenv(
+        "GEMINI_API_URL",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent",
+    )
+    
+    if not gemini_api_key:
+        logger.error("GEMINI_API_KEY is not configured. Set it as an environment variable or in .env file.")
         return None
 
     img_base64 = base64.b64encode(image_bytes).decode("utf-8")
@@ -138,8 +136,8 @@ def call_gemini(image_bytes: bytes) -> Optional[str]:
 
     try:
         response = requests.post(
-            settings.GEMINI_API_URL,
-            params={"key": settings.GEMINI_API_KEY},
+            gemini_api_url,
+            params={"key": gemini_api_key},
             headers={"Content-Type": "application/json"},
             json=payload,
             timeout=45,

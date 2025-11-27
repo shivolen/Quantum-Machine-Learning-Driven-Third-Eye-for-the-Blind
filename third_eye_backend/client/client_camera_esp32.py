@@ -64,7 +64,7 @@ class ESP32Config:
     @classmethod
     def from_env(cls) -> "ESP32Config":
         camera_ip = os.getenv("ESP32_IP", "192.168.1.9")
-        backend_endpoint = os.getenv("BACKEND_ENDPOINT", "http://127.0.0.1:8000/detect_objects")
+        backend_endpoint = os.getenv("BACKEND_ENDPOINT", "http://127.0.0.1:8000/predict")
         interval = _to_float(os.getenv("SEND_INTERVAL"), 3.0)
         return cls(camera_ip=camera_ip, backend_endpoint=backend_endpoint, send_interval=interval)
 
