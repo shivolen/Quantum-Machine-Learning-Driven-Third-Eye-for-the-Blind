@@ -8,7 +8,6 @@ from typing import Any, List
 
 import asyncio
 
-import httpx
 from pathlib import Path
 
 import sys
@@ -24,10 +23,10 @@ if str(PACKAGE_DIR) not in sys.path:
 
 from config.settings import settings
 from core.tts_utils import speak
-from core.vision_utils import analyze_image_with_fallback
+from core.vision_utils import analyze_image_with_fallback, request_gemini_detections
 from feature_utils import extract_features_from_gemini_response
 from qml_inference import load_model_bundle, predict_risks
-from tts_utils import speak_risk
+from tts_utils import speak_risk, summarize_objects_to_sentence
 
 
 # Configure structured logging
@@ -165,85 +164,66 @@ async def detect_objects(payload: Base64ImagePayload) -> JSONResponse:
     return await _handle_image_bytes(image_bytes)
 
 
-async def _request_gemini_detections(image_bytes: bytes) -> dict[str, Any]:
-    if not settings.GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini API key is not configured.")
-
-    encoded = base64.b64encode(image_bytes).decode("utf-8")
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "text": (
-                            "Detect objects and provide JSON with a 'detections' array of "
-                            "{name: string, bbox: {x1: float, y1: float, x2: float, y2: float}}. "
-                            "Use normalized coordinates between 0 and 1."
-                        )
-                    },
-                    {
-                        "inline_data": {
-                            "mime_type": "image/jpeg",
-                            "data": encoded,
-                        }
-                    },
-                ]
-            }
-        ]
-    }
-
-    timeout = httpx.Timeout(40.0, connect=10.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            response = await client.post(
-                settings.GEMINI_API_URL,
-                params={"key": settings.GEMINI_API_KEY},
-                json=payload,
-            )
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            logger.error("Gemini API error: %s", exc.response.text)
-            raise HTTPException(status_code=502, detail="Gemini API request failed.") from exc
-        except httpx.HTTPError as exc:  # noqa: BLE001
-            logger.error("Network error contacting Gemini API: %s", exc)
-            raise HTTPException(status_code=502, detail="Gemini API network error.") from exc
-    return response.json()
-
-
 async def _predict_risk_from_frame(image_bytes: bytes) -> dict[str, Any]:
-    gemini_response = await _request_gemini_detections(image_bytes)
+    try:
+        gemini_response = await run_in_threadpool(request_gemini_detections, image_bytes)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Gemini detection request failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Gemini detection failed.") from exc
+    logger.debug("Raw Gemini detection response: %s", gemini_response)
+
     feature_vectors, object_names = extract_features_from_gemini_response(gemini_response)
+    unique_objects: list[str] = []
+    for name in object_names:
+        if name not in unique_objects:
+            unique_objects.append(name)
 
     logger.info(
         "Gemini detections complete",
-        extra={"objects": object_names, "count": len(object_names)},
+        extra={"objects": unique_objects, "count": len(unique_objects)},
     )
+
+    logger.info(
+        "Feature vectors generated",
+        extra={"count": len(feature_vectors)},
+    )
+    if feature_vectors:
+        logger.debug("Feature vectors detail: %s", feature_vectors)
 
     if not feature_vectors:
         logger.info("No valid feature vectors found; defaulting to safe state.")
-        message = await run_in_threadpool(speak_risk, 0)
-        return {"risk": 0, "message": message, "objects_detected": []}
+        summary = summarize_objects_to_sentence(unique_objects)
+        risk_text = speak_risk(0, announce=False)
+        message = f"{summary}. {risk_text}".strip()
+        await run_in_threadpool(speak, message)
+        return {"risk": 0, "message": message, "objects_detected": unique_objects}
 
     risks = await run_in_threadpool(predict_risks, feature_vectors)
     logger.info("QML model returned predictions", extra={"predictions": risks})
 
     if not risks:
         logger.warning("Prediction returned no values; defaulting to safe state.")
-        message = await run_in_threadpool(speak_risk, 0)
-        return {"risk": 0, "message": message, "objects_detected": object_names}
+        summary = summarize_objects_to_sentence(unique_objects)
+        risk_text = speak_risk(0, announce=False)
+        message = f"{summary}. {risk_text}".strip()
+        await run_in_threadpool(speak, message)
+        return {"risk": 0, "message": message, "objects_detected": unique_objects}
 
     max_risk = int(max(risks))
     logger.info(
         "Highest risk computed",
-        extra={"risk": max_risk, "objects_detected": object_names},
+        extra={"risk": max_risk, "objects_detected": unique_objects},
     )
-    message = await run_in_threadpool(speak_risk, max_risk)
-    logger.info("Risk message ready", extra={"message": message})
+    summary = summarize_objects_to_sentence(unique_objects)
+    risk_text = speak_risk(max_risk, announce=False)
+    message = f"{summary}. {risk_text}".strip()
+    await run_in_threadpool(speak, message)
+    logger.info("Risk message ready", extra={"risk_message": message})
 
     return {
         "risk": max_risk,
         "message": message,
-        "objects_detected": object_names,
+        "objects_detected": unique_objects,
     }
 
 
