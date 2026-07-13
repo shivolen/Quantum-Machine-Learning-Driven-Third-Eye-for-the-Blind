@@ -165,67 +165,85 @@ async def detect_objects(payload: Base64ImagePayload) -> JSONResponse:
 
 
 async def _predict_risk_from_frame(image_bytes: bytes) -> dict[str, Any]:
+    """
+    GEMINI-ONLY MODE
+    - Ignore QML entirely for tomorrow demo
+    - Parse caption→objects→risk
+    - Generate clean TTS navigation sentence
+    """
+
+    logger.info("Predict called - GEMINI ONLY MODE (QML bypass enabled)")
+
+    # 1. Call Gemini to get navigation caption
     try:
-        gemini_response = await run_in_threadpool(request_gemini_detections, image_bytes)
-    except Exception as exc:  # noqa: BLE001
+        response = await run_in_threadpool(request_gemini_detections, image_bytes)
+    except Exception as exc:
         logger.exception("Gemini detection request failed: %s", exc)
         raise HTTPException(status_code=502, detail="Gemini detection failed.") from exc
-    logger.debug("Raw Gemini detection response: %s", gemini_response)
 
-    feature_vectors, object_names = extract_features_from_gemini_response(gemini_response)
-    unique_objects: list[str] = []
-    for name in object_names:
-        if name not in unique_objects:
-            unique_objects.append(name)
+    logger.info("Gemini response received")
 
-    logger.info(
-        "Gemini detections complete",
-        extra={"objects": unique_objects, "count": len(unique_objects)},
-    )
+    # 2. Extract caption safely
+    try:
+        caption = response["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception:
+        caption = "clear path ahead"
+    caption = caption.replace("\n", " ").strip()
+    logger.info("Caption extracted: %s", caption)
 
-    logger.info(
-        "Feature vectors generated",
-        extra={"count": len(feature_vectors)},
-    )
-    if feature_vectors:
-        logger.debug("Feature vectors detail: %s", feature_vectors)
+    # 3. Extract object words based on caption (keyword matching)
+    objects = []
+    vocab = [
+        "car", "bike", "bicycle", "scooter", "bus", "truck",
+        "person", "people", "man", "woman", "child",
+        "stairs", "step", "elevator",
+        "table", "desk", "chair", "bench",
+        "pole", "wall", "railing",
+        "door", "gate",
+        "hallway", "path", "road", "corridor"
+    ]
 
-    if not feature_vectors:
-        logger.info("No valid feature vectors found; defaulting to safe state.")
-        summary = summarize_objects_to_sentence(unique_objects)
-        risk_text = speak_risk(0, announce=False)
-        message = f"{summary}. {risk_text}".strip()
-        await run_in_threadpool(speak, message)
-        return {"risk": 0, "message": message, "objects_detected": unique_objects}
+    caption_lower = caption.lower()
+    for v in vocab:
+        if v in caption_lower and v not in objects:
+            objects.append(v)
 
-    risks = await run_in_threadpool(predict_risks, feature_vectors)
-    logger.info("QML model returned predictions", extra={"predictions": risks})
+    if not objects:
+        objects = ["path"]
 
-    if not risks:
-        logger.warning("Prediction returned no values; defaulting to safe state.")
-        summary = summarize_objects_to_sentence(unique_objects)
-        risk_text = speak_risk(0, announce=False)
-        message = f"{summary}. {risk_text}".strip()
-        await run_in_threadpool(speak, message)
-        return {"risk": 0, "message": message, "objects_detected": unique_objects}
+    logger.info("Objects extracted: %s", objects)
 
-    max_risk = int(max(risks))
-    logger.info(
-        "Highest risk computed",
-        extra={"risk": max_risk, "objects_detected": unique_objects},
-    )
-    summary = summarize_objects_to_sentence(unique_objects)
-    risk_text = speak_risk(max_risk, announce=False)
-    message = f"{summary}. {risk_text}".strip()
+    # 4. Risk Classification
+    if any(x in caption_lower for x in ["very close", "blocking", "fast", "approaching", "too close"]):
+        risk = 2
+    elif any(x in caption_lower for x in ["close", "medium distance", "partially"]):
+        risk = 1
+    else:
+        risk = 0
+
+    logger.info("Assigned risk value: %s", risk)
+
+    # 5. Build natural sentence
+    obj = objects[0].capitalize()
+
+    if risk == 2:
+        message = f"{obj} ahead. Danger ahead. Stop immediately."
+    elif risk == 1:
+        message = f"{obj} ahead. Proceed carefully."
+    else:
+        message = f"{obj} ahead. Safe to move ahead."
+
+    logger.info("Final verbal output: %s", message)
+
+    # 6. Speak output
     await run_in_threadpool(speak, message)
-    logger.info("Risk message ready", extra={"risk_message": message})
 
+    # 7. Return JSON response
     return {
-        "risk": max_risk,
+        "risk": risk,
         "message": message,
-        "objects_detected": unique_objects,
+        "objects_detected": objects,
     }
-
 
 @app.on_event("startup")
 async def startup_event() -> None:

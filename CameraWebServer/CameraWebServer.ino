@@ -6,8 +6,8 @@
 #include "soc/rtc_cntl_reg.h"
 
 // WiFi credentials
-const char* ssid = "Airtel_mela_8808";
-const char* password = "air09602";
+const char* ssid = "shivolen_544";
+const char* password = "haramballs";
 
 // Camera pins for AI-Thinker ESP32-CAM
 #define PWDN_GPIO_NUM     32

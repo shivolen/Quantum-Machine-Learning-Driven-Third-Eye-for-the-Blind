@@ -43,7 +43,17 @@ def analyze_image(image_bytes: bytes) -> List[str]:
             "contents": [{
                 "parts": [
                     {
-                        "text": "Describe what you see in this image in one short sentence for navigation assistance. Focus on objects and their relative positions, like: 'A person is sitting in front of a desk with a laptop on it.'"
+                        "text": (
+    "You are a navigation assistant for blind users. "
+    "Describe the scene in 5-10 simple words ONLY related to navigation. "
+    "MUST include distance and urgency using keywords like: ahead, near, very close, approaching, moving fast, blocking, clear path. "
+    "STRICT FORMAT: '<object> <position> <movement>'. "
+    "Examples: 'car ahead approaching fast', 'stairs very close ahead', "
+    "'hallway clear path', 'crowd ahead moving slow'. "
+    "Do NOT include background scenery like mountains or sky. "
+    "Do NOT use long sentences or multiple clauses. "
+)
+
                     },
                     {
                         "inline_data": {
@@ -145,31 +155,47 @@ def request_gemini_detections(image_bytes: bytes) -> Dict[str, Any]:
         raise ValueError("Gemini API key is not configured.")
 
     encoded = base64.b64encode(image_bytes).decode("utf-8")
-    prompt = (
-        "Identify every object in this image and respond ONLY with valid JSON using this schema:\n"
-        '{"objects":[{"name":"<label>","bbox":[x1,y1,x2,y2],"confidence":0.0}]}\n'
-        "Replace <label> and numeric values with the actual detections from this image. "
-        "Do not repeat the example values, do not add narration, and output strictly valid JSON."
-    )
+    prompt = """
+
+You are an AI assistant helping a blind person navigate safely.
+
+Analyze the uploaded image and return JSON with this schema ONLY:
+{
+  "objects": [
+    {"name":"<label>","distance":"<near|medium|far>"}
+  ],
+  "overall_risk": <0|1|2>,
+  "overall_summary": "<3-8 word safety navigation sentence>"
+}
+
+CLASSIFICATION RULES (IMPORTANT):
+- Risk = 2 (Danger) if obstacles are very close, blocking path, moving toward user, or vehicle approaching.
+- Risk = 1 (Caution) if objects are moderately close, may require maneuvering, or partially blocking.
+- Risk = 0 (Safe) if path is clear, objects far away or off to the side.
+
+SUMMARY FORMAT:
+Describe main object + position + motion + risk in 3–8 simple words. 
+For example:
+"Bike approaching from left - danger"
+"Person ahead standing still - caution"
+"Clear hallway - safe"
+
+NO narration or explanation. NO additional words. NO markdown. Return valid JSON ONLY.
+"""
+
+
     payload = {
         "contents": [
             {
                 "parts": [
                     {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": "image/jpeg",
-                            "data": encoded,
-                        }
-                    },
+                    {"inline_data": {"mime_type": "image/jpeg", "data": encoded}}
                 ]
             }
         ],
-        "generationConfig": {
-            "temperature": 0.0,
-            "responseMimeType": "application/json",
-        },
+        "generationConfig": {"temperature": 0.2, "topK": 10, "maxOutputTokens": 200},
     }
+
 
     timeout = httpx.Timeout(40.0, connect=10.0)
     try:

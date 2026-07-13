@@ -26,7 +26,7 @@ logger = logging.getLogger("esp32_camera_client")
 
 
 def _build_snapshot_url(camera_ip: str) -> str:
-    base = camera_ip.strip() or "192.168.1.9"
+    base = camera_ip.strip() or "192.168.137.70"
     if not base.startswith("http://") and not base.startswith("https://"):
         base = f"http://{base}"
     return f"{base.rstrip('/')}/capture"
@@ -63,7 +63,7 @@ class ESP32Config:
 
     @classmethod
     def from_env(cls) -> "ESP32Config":
-        camera_ip = os.getenv("ESP32_IP", "192.168.1.9")
+        camera_ip = os.getenv("ESP32_IP", "http://192.168.137.70")
         backend_endpoint = os.getenv("BACKEND_ENDPOINT", "http://127.0.0.1:8000/predict")
         interval = _to_float(os.getenv("SEND_INTERVAL"), 3.0)
         return cls(camera_ip=camera_ip, backend_endpoint=backend_endpoint, send_interval=interval)

@@ -16,9 +16,9 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     # Gemini API configuration
-    GEMINI_API_KEY: str = "AIzaSyDoSlEG7IKaG7KYPZJXGISIa8_K1N5ExKQ"
-    GEMINI_MODEL: str = "gemini-2.0-flash-001"
-    GEMINI_API_URL: str = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent"
+    GEMINI_API_KEY: str = "AIzaSyDHrDQO1lbxPbcGvfotV8_6L7y8QASiRvw"
+    GEMINI_MODEL: str = "gemini-2.5-flash-lite" 
+    GEMINI_API_URL: str = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
 
     # Vision analysis settings
     FRAME_CAPTURE_INTERVAL: float = 3.0  # seconds between frame captures
